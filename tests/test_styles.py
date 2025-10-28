@@ -51,7 +51,7 @@ def test_merged_styles_en():
     assert composed == doc
 
 
-def test_styles_are_not_switched_for_first_numbering_element():
+def test_styles_are_not_switched_for_first_numbering_element(static_reseed):
     doc = FixtureDocument("switched_listing_style.docx")
     composed = ComposedDocument(
         "master_switched_listing_style.docx", "switched_listing_style.docx")

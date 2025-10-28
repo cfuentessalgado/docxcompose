@@ -91,7 +91,7 @@ def test_restarts_numbering_for_all_elements_of_same_sequence():
     assert composed == doc
 
 
-def test_preserves_list_styles_when_restarting_numberings():
+def test_preserves_list_styles_when_restarting_numberings(static_reseed):
     doc = FixtureDocument("broken_listing.docx")
     composed = ComposedDocument(
         "broken_listing_master.docx", "broken_listing.docx")
@@ -99,7 +99,7 @@ def test_preserves_list_styles_when_restarting_numberings():
     assert composed == doc
 
 
-def test_preserves_list_styles_when_restarting_many_numberings():
+def test_preserves_list_styles_when_restarting_many_numberings(static_reseed):
     doc = FixtureDocument("broken_listing_many.docx")
     composed = ComposedDocument(
         "broken_listing_master.docx", "broken_listing_many.docx")
@@ -107,7 +107,7 @@ def test_preserves_list_styles_when_restarting_many_numberings():
     assert composed == doc
 
 
-def test_preserves_list_styles_when_restarting_nested_numberings():
+def test_preserves_list_styles_when_restarting_nested_numberings(static_reseed):
     doc = FixtureDocument("broken_listing_nested.docx")
     composed = ComposedDocument(
         "broken_listing_master.docx", "broken_listing_nested.docx")
