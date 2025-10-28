@@ -277,6 +277,68 @@ class Composer(object):
         """Generate a unique style ID by appending document counter."""
         return 'doc{}_{}' .format(self._doc_counter, style_id)
 
+    def _import_style_with_dependencies(self, doc, style_id, style_id_mapping):
+        """
+        Import a style and all its dependencies (base styles, linked styles).
+        Returns the unique style ID assigned to this style.
+        """
+        # Check if we've already imported this style
+        if style_id in style_id_mapping:
+            return style_id_mapping[style_id]
+        
+        style_element = doc.styles.element.get_by_id(style_id)
+        if style_element is None:
+            return None
+            
+        new_style_element = deepcopy(style_element)
+        unique_style_id = self._make_unique_style_id(style_id)
+        
+        # Update the style ID in the element
+        new_style_element.set('{%s}styleId' % NS['w'], unique_style_id)
+        
+        # Import base style first (if it exists)
+        base_style_refs = xpath(new_style_element, './/w:basedOn/@w:val')
+        if base_style_refs:
+            base_style_id = base_style_refs[0]
+            # Recursively import base style
+            unique_base_style_id = self._import_style_with_dependencies(
+                doc, base_style_id, style_id_mapping)
+            if unique_base_style_id:
+                base_style_element = xpath(new_style_element, './/w:basedOn')[0]
+                base_style_element.set('{%s}val' % NS['w'], unique_base_style_id)
+        
+        # Import linked style (if it exists)
+        linked_style_ids = xpath(new_style_element, './/w:link/@w:val')
+        if linked_style_ids:
+            linked_style_id = linked_style_ids[0]
+            # Import linked style
+            linked_style_element = doc.styles.element.get_by_id(linked_style_id)
+            if linked_style_element is not None and linked_style_id not in style_id_mapping:
+                new_linked_element = deepcopy(linked_style_element)
+                unique_linked_style_id = self._make_unique_style_id(linked_style_id)
+                new_linked_element.set('{%s}styleId' % NS['w'], unique_linked_style_id)
+                
+                # Update the link back to the main style
+                link_back_ids = xpath(new_linked_element, './/w:link/@w:val')
+                if link_back_ids:
+                    link_back_element = xpath(new_linked_element, './/w:link')[0]
+                    link_back_element.set('{%s}val' % NS['w'], unique_style_id)
+                
+                self.doc.styles.element.append(new_linked_element)
+                style_id_mapping[linked_style_id] = unique_linked_style_id
+            
+            # Update the link in the main style
+            if linked_style_id in style_id_mapping:
+                linked_style_element = xpath(new_style_element, './/w:link')[0]
+                linked_style_element.set('{%s}val' % NS['w'], style_id_mapping[linked_style_id])
+        
+        # Add the style to the document
+        self.doc.styles.element.append(new_style_element)
+        self.add_numberings(doc, new_style_element)
+        style_id_mapping[style_id] = unique_style_id
+        
+        return unique_style_id
+
     def _create_style_id_mapping(self, doc):
         # Style ids are language-specific, but names not (always), WTF?
         # The inserted document may have another language than the composed one.
@@ -296,63 +358,26 @@ class Composer(object):
     def add_styles(self, doc, element):
         """Add styles from the given document used in the given element."""
         our_style_ids = [s.style_id for s in self.doc.styles]
-        # de-duplicate ids and keep order to make sure tests are not flaky
-        used_style_ids = list(OrderedDict.fromkeys([e.val for e in xpath(
-            element, './/w:tblStyle|.//w:pStyle|.//w:rStyle')]))
-
+        
         # Track style ID mappings for preserve_document_styles mode
         style_id_mapping = {}
+        
+        if self.preserve_document_styles:
+            # Import ALL styles from the document to preserve formatting
+            # This includes default styles that may not be explicitly referenced
+            used_style_ids = [s.style_id for s in doc.styles]
+        else:
+            # Original behavior: only import styles that are explicitly used
+            # de-duplicate ids and keep order to make sure tests are not flaky
+            used_style_ids = list(OrderedDict.fromkeys([e.val for e in xpath(
+                element, './/w:tblStyle|.//w:pStyle|.//w:rStyle')]))
 
         for style_id in used_style_ids:
             our_style_id = self.mapped_style_id(style_id)
             
             if self.preserve_document_styles:
-                # Always import styles with unique IDs to preserve document styles
-                style_element = doc.styles.element.get_by_id(style_id)
-                if style_element is not None:
-                    new_style_element = deepcopy(style_element)
-                    unique_style_id = self._make_unique_style_id(style_id)
-                    
-                    # Update the style ID in the element
-                    new_style_element.set('{%s}styleId' % NS['w'], unique_style_id)
-                    
-                    # Update base style reference if it exists
-                    base_style_refs = xpath(new_style_element, './/w:basedOn/@w:val')
-                    if base_style_refs:
-                        base_style_id = base_style_refs[0]
-                        unique_base_style_id = self._make_unique_style_id(base_style_id)
-                        base_style_element = xpath(new_style_element, './/w:basedOn')[0]
-                        base_style_element.set('{%s}val' % NS['w'], unique_base_style_id)
-                    
-                    # Update linked style reference if it exists
-                    linked_style_ids = xpath(new_style_element, './/w:link/@w:val')
-                    if linked_style_ids:
-                        linked_style_id = linked_style_ids[0]
-                        unique_linked_style_id = self._make_unique_style_id(linked_style_id)
-                        linked_style_element = xpath(new_style_element, './/w:link')[0]
-                        linked_style_element.set('{%s}val' % NS['w'], unique_linked_style_id)
-                    
-                    self.doc.styles.element.append(new_style_element)
-                    self.add_numberings(doc, new_style_element)
-                    style_id_mapping[style_id] = unique_style_id
-                    
-                    # Also add linked styles with unique IDs
-                    if linked_style_ids:
-                        linked_style_id = linked_style_ids[0]
-                        linked_style_element = doc.styles.element.get_by_id(linked_style_id)
-                        if linked_style_element is not None:
-                            new_linked_element = deepcopy(linked_style_element)
-                            unique_linked_style_id = self._make_unique_style_id(linked_style_id)
-                            new_linked_element.set('{%s}styleId' % NS['w'], unique_linked_style_id)
-                            
-                            # Update the link back to the main style
-                            link_back_ids = xpath(new_linked_element, './/w:link/@w:val')
-                            if link_back_ids:
-                                link_back_element = xpath(new_linked_element, './/w:link')[0]
-                                link_back_element.set('{%s}val' % NS['w'], unique_style_id)
-                            
-                            self.doc.styles.element.append(new_linked_element)
-                            style_id_mapping[linked_style_id] = unique_linked_style_id
+                # Import style with all its dependencies
+                self._import_style_with_dependencies(doc, style_id, style_id_mapping)
             else:
                 # Original behavior: merge styles
                 if our_style_id not in our_style_ids:
