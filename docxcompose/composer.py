@@ -66,6 +66,9 @@ class Composer(object):
 
         self._doc_counter += 1
         self._create_style_id_mapping(doc)
+        
+        # Initialize style mapping for this document to prevent duplicate imports
+        self._current_doc_style_mapping = {}
 
         for element in doc.element.body:
             if isinstance(element, CT_SectPr):
@@ -369,8 +372,11 @@ class Composer(object):
         """Add styles from the given document used in the given element."""
         our_style_ids = [s.style_id for s in self.doc.styles]
         
-        # Track style ID mappings for preserve_document_styles mode
-        style_id_mapping = {}
+        # Use persistent style ID mapping for preserve_document_styles mode
+        # This prevents importing the same styles multiple times
+        if not hasattr(self, '_current_doc_style_mapping'):
+            self._current_doc_style_mapping = {}
+        style_id_mapping = self._current_doc_style_mapping
         
         if self.preserve_document_styles:
             # Import ALL styles from the document to preserve formatting
