@@ -296,6 +296,12 @@ class Composer(object):
         # Update the style ID in the element
         new_style_element.set('{%s}styleId' % NS['w'], unique_style_id)
         
+        # Remove default attribute to prevent conflicts
+        # Only the master document's styles should be marked as default
+        default_attr = '{%s}default' % NS['w']
+        if default_attr in new_style_element.attrib:
+            del new_style_element.attrib[default_attr]
+        
         # Import base style first (if it exists)
         base_style_refs = xpath(new_style_element, './/w:basedOn/@w:val')
         if base_style_refs:
@@ -317,6 +323,10 @@ class Composer(object):
                 new_linked_element = deepcopy(linked_style_element)
                 unique_linked_style_id = self._make_unique_style_id(linked_style_id)
                 new_linked_element.set('{%s}styleId' % NS['w'], unique_linked_style_id)
+                
+                # Remove default attribute from linked style as well
+                if default_attr in new_linked_element.attrib:
+                    del new_linked_element.attrib[default_attr]
                 
                 # Update the link back to the main style
                 link_back_ids = xpath(new_linked_element, './/w:link/@w:val')
@@ -433,6 +443,7 @@ class Composer(object):
 
         # Update style references in the element when preserving styles
         if self.preserve_document_styles and style_id_mapping:
+            # First, update explicit style references
             for old_style_id, new_style_id in style_id_mapping.items():
                 style_elements = xpath(
                     element,
@@ -441,6 +452,45 @@ class Composer(object):
                     './/w:rStyle[@w:val="%(styleid)s"]' % dict(styleid=old_style_id))
                 for el in style_elements:
                     el.val = new_style_id
+            
+            # Handle implicit style references (content without explicit style)
+            # Find default paragraph style from source document
+            default_para_style = None
+            for style in doc.styles:
+                style_elem = doc.styles.element.get_by_id(style.style_id)
+                if (style_elem is not None and 
+                    style_elem.get('{%s}type' % NS['w']) == 'paragraph' and
+                    style_elem.get('{%s}default' % NS['w']) == '1'):
+                    default_para_style = style.style_id
+                    break
+            
+            # Add explicit style references to paragraphs without them
+            if default_para_style and default_para_style in style_id_mapping:
+                new_default_style_id = style_id_mapping[default_para_style]
+                
+                # Check if the element itself is a paragraph
+                paragraphs = []
+                if element.tag == '{%s}p' % NS['w']:
+                    paragraphs = [element]
+                else:
+                    # Otherwise, find paragraphs within the element
+                    paragraphs = xpath(element, './/w:p')
+                
+                for para in paragraphs:
+                    # Check if paragraph already has a style
+                    existing_style = xpath(para, './w:pPr/w:pStyle')
+                    if not existing_style:
+                        # Add paragraph properties if not present
+                        pPr = xpath(para, './w:pPr')
+                        if not pPr:
+                            pPr_elem = parse_xml(
+                                '<w:pPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>')
+                            para.insert(0, pPr_elem)
+                            pPr = [pPr_elem]
+                        # Add style reference
+                        pStyle_elem = parse_xml(
+                            '<w:pStyle xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" w:val="%s"/>' % new_default_style_id)
+                        pPr[0].insert(0, pStyle_elem)
 
     def add_numberings(self, doc, element):
         """Add numberings from the given document used in the given element."""
