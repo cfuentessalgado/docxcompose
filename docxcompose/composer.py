@@ -32,15 +32,17 @@ PART_RELTYPES_WITH_STYLES = [
 
 class Composer(object):
 
-    def __init__(self, doc):
+    def __init__(self, doc, preserve_document_styles=False):
         self.doc = doc
         self.pkg = doc.part.package
 
         self.restart_numbering = True
+        self.preserve_document_styles = preserve_document_styles
 
         self.reset_reference_mapping()
 
         self.first_section_properties_added = False
+        self._doc_counter = 0
 
     def reset_reference_mapping(self):
         self.num_id_mapping = {}
@@ -62,6 +64,7 @@ class Composer(object):
             for name in cprops.keys():
                 cprops.dissolve_fields(name)
 
+        self._doc_counter += 1
         self._create_style_id_mapping(doc)
 
         for element in doc.element.body:
@@ -270,6 +273,10 @@ class Composer(object):
         return self._style_name2id.get(
                 self._style_id2name[style_id], style_id)
 
+    def _make_unique_style_id(self, style_id):
+        """Generate a unique style ID by appending document counter."""
+        return 'doc{}_{}' .format(self._doc_counter, style_id)
+
     def _create_style_id_mapping(self, doc):
         # Style ids are language-specific, but names not (always), WTF?
         # The inserted document may have another language than the composed one.
@@ -293,57 +300,122 @@ class Composer(object):
         used_style_ids = list(OrderedDict.fromkeys([e.val for e in xpath(
             element, './/w:tblStyle|.//w:pStyle|.//w:rStyle')]))
 
+        # Track style ID mappings for preserve_document_styles mode
+        style_id_mapping = {}
+
         for style_id in used_style_ids:
             our_style_id = self.mapped_style_id(style_id)
-            if our_style_id not in our_style_ids:
-                style_element = deepcopy(doc.styles.element.get_by_id(style_id))
-                if style_element is not None:
-                    self.doc.styles.element.append(style_element)
-                    self.add_numberings(doc, style_element)
-                    # Also add linked styles
-                    linked_style_ids = xpath(style_element, './/w:link/@w:val')
-                    if linked_style_ids:
-                        linked_style_id = linked_style_ids[0]
-                        our_linked_style_id = self.mapped_style_id(linked_style_id)
-                        if our_linked_style_id not in our_style_ids:
-                            our_linked_style = doc.styles.element.get_by_id(
-                                linked_style_id)
-                            if our_linked_style is not None:
-                                self.doc.styles.element.append(deepcopy(
-                                    our_linked_style))
-            else:
-                # Create a mapping for abstractNumIds used in existing styles
-                # This is used when adding numberings to avoid having multiple
-                # <w:abstractNum> elements for the same style.
+            
+            if self.preserve_document_styles:
+                # Always import styles with unique IDs to preserve document styles
                 style_element = doc.styles.element.get_by_id(style_id)
                 if style_element is not None:
-                    num_ids = xpath(style_element, './/w:numId/@w:val')
-                    if num_ids:
-                        anum_ids = xpath(
-                            doc.part.numbering_part.element,
-                            './/w:num[@w:numId="%s"]/w:abstractNumId/@w:val' % num_ids[0])
-                        if anum_ids:
-                            our_style_element = self.doc.styles.element.get_by_id(our_style_id)
-                            our_num_ids = xpath(our_style_element, './/w:numId/@w:val')
-                            if our_num_ids:
-                                numbering_part = self.numbering_part()
-                                our_anum_ids = xpath(
-                                    numbering_part.element,
-                                    './/w:num[@w:numId="%s"]/w:abstractNumId/@w:val' % our_num_ids[0])
-                                if our_anum_ids:
-                                    self.anum_id_mapping[int(anum_ids[0])] = int(our_anum_ids[0])
+                    new_style_element = deepcopy(style_element)
+                    unique_style_id = self._make_unique_style_id(style_id)
+                    
+                    # Update the style ID in the element
+                    new_style_element.set('{%s}styleId' % NS['w'], unique_style_id)
+                    
+                    # Update base style reference if it exists
+                    base_style_refs = xpath(new_style_element, './/w:basedOn/@w:val')
+                    if base_style_refs:
+                        base_style_id = base_style_refs[0]
+                        unique_base_style_id = self._make_unique_style_id(base_style_id)
+                        base_style_element = xpath(new_style_element, './/w:basedOn')[0]
+                        base_style_element.set('{%s}val' % NS['w'], unique_base_style_id)
+                    
+                    # Update linked style reference if it exists
+                    linked_style_ids = xpath(new_style_element, './/w:link/@w:val')
+                    if linked_style_ids:
+                        linked_style_id = linked_style_ids[0]
+                        unique_linked_style_id = self._make_unique_style_id(linked_style_id)
+                        linked_style_element = xpath(new_style_element, './/w:link')[0]
+                        linked_style_element.set('{%s}val' % NS['w'], unique_linked_style_id)
+                    
+                    self.doc.styles.element.append(new_style_element)
+                    self.add_numberings(doc, new_style_element)
+                    style_id_mapping[style_id] = unique_style_id
+                    
+                    # Also add linked styles with unique IDs
+                    if linked_style_ids:
+                        linked_style_id = linked_style_ids[0]
+                        linked_style_element = doc.styles.element.get_by_id(linked_style_id)
+                        if linked_style_element is not None:
+                            new_linked_element = deepcopy(linked_style_element)
+                            unique_linked_style_id = self._make_unique_style_id(linked_style_id)
+                            new_linked_element.set('{%s}styleId' % NS['w'], unique_linked_style_id)
+                            
+                            # Update the link back to the main style
+                            link_back_ids = xpath(new_linked_element, './/w:link/@w:val')
+                            if link_back_ids:
+                                link_back_element = xpath(new_linked_element, './/w:link')[0]
+                                link_back_element.set('{%s}val' % NS['w'], unique_style_id)
+                            
+                            self.doc.styles.element.append(new_linked_element)
+                            style_id_mapping[linked_style_id] = unique_linked_style_id
+            else:
+                # Original behavior: merge styles
+                if our_style_id not in our_style_ids:
+                    style_element = deepcopy(doc.styles.element.get_by_id(style_id))
+                    if style_element is not None:
+                        self.doc.styles.element.append(style_element)
+                        self.add_numberings(doc, style_element)
+                        # Also add linked styles
+                        linked_style_ids = xpath(style_element, './/w:link/@w:val')
+                        if linked_style_ids:
+                            linked_style_id = linked_style_ids[0]
+                            our_linked_style_id = self.mapped_style_id(linked_style_id)
+                            if our_linked_style_id not in our_style_ids:
+                                our_linked_style = doc.styles.element.get_by_id(
+                                    linked_style_id)
+                                if our_linked_style is not None:
+                                    self.doc.styles.element.append(deepcopy(
+                                        our_linked_style))
+                else:
+                    # Create a mapping for abstractNumIds used in existing styles
+                    # This is used when adding numberings to avoid having multiple
+                    # <w:abstractNum> elements for the same style.
+                    style_element = doc.styles.element.get_by_id(style_id)
+                    if style_element is not None:
+                        num_ids = xpath(style_element, './/w:numId/@w:val')
+                        if num_ids:
+                            anum_ids = xpath(
+                                doc.part.numbering_part.element,
+                                './/w:num[@w:numId="%s"]/w:abstractNumId/@w:val' % num_ids[0])
+                            if anum_ids:
+                                our_style_element = self.doc.styles.element.get_by_id(our_style_id)
+                                our_num_ids = xpath(our_style_element, './/w:numId/@w:val')
+                                if our_num_ids:
+                                    numbering_part = self.numbering_part()
+                                    our_anum_ids = xpath(
+                                        numbering_part.element,
+                                        './/w:num[@w:numId="%s"]/w:abstractNumId/@w:val' % our_num_ids[0])
+                                    if our_anum_ids:
+                                        self.anum_id_mapping[int(anum_ids[0])] = int(our_anum_ids[0])
 
-            # Replace language-specific style id with our style id
-            if our_style_id != style_id and our_style_id is not None:
+                # Replace language-specific style id with our style id
+                if our_style_id != style_id and our_style_id is not None:
+                    style_elements = xpath(
+                        element,
+                        './/w:tblStyle[@w:val="%(styleid)s"]|'
+                        './/w:pStyle[@w:val="%(styleid)s"]|'
+                        './/w:rStyle[@w:val="%(styleid)s"]' % dict(styleid=style_id))
+                    for el in style_elements:
+                        el.val = our_style_id
+                        
+            # Update our style ids
+            our_style_ids = [s.style_id for s in self.doc.styles]
+
+        # Update style references in the element when preserving styles
+        if self.preserve_document_styles and style_id_mapping:
+            for old_style_id, new_style_id in style_id_mapping.items():
                 style_elements = xpath(
                     element,
                     './/w:tblStyle[@w:val="%(styleid)s"]|'
                     './/w:pStyle[@w:val="%(styleid)s"]|'
-                    './/w:rStyle[@w:val="%(styleid)s"]' % dict(styleid=style_id))
+                    './/w:rStyle[@w:val="%(styleid)s"]' % dict(styleid=old_style_id))
                 for el in style_elements:
-                    el.val = our_style_id
-            # Update our style ids
-            our_style_ids = [s.style_id for s in self.doc.styles]
+                    el.val = new_style_id
 
     def add_numberings(self, doc, element):
         """Add numberings from the given document used in the given element."""

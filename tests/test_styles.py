@@ -63,6 +63,92 @@ def test_continue_when_no_styles():
     doc = ComposedDocument("aatmay.docx", "aatmay.docx")
 
 
+def test_preserve_document_styles_creates_unique_style_ids():
+    """Test that preserve_document_styles creates unique style IDs for each document."""
+    master_doc = Document(docx_path("styles_en.docx"))
+    composer = Composer(master_doc, preserve_document_styles=True)
+    
+    # Get initial style count
+    initial_style_count = len(master_doc.styles)
+    
+    # Append a document with potentially conflicting styles
+    doc_to_append = Document(docx_path("styles_de.docx"))
+    composer.append(doc_to_append)
+    
+    style_ids = [s.style_id for s in composer.doc.styles]
+    
+    # Check that new styles have unique IDs with doc counter prefix
+    assert any('doc1_' in style_id for style_id in style_ids), \
+        "Expected to find styles with 'doc1_' prefix"
+    
+    # Verify the number of styles increased
+    assert len(composer.doc.styles) > initial_style_count, \
+        "Expected more styles after appending with preserve_document_styles=True"
+
+
+def test_preserve_document_styles_keeps_both_styles():
+    """Test that both master and appended documents' styles are preserved."""
+    master_doc = Document(docx_path("styles_en.docx"))
+    composer = Composer(master_doc, preserve_document_styles=True)
+    
+    # Get master document's custom styles
+    master_style_ids = [s.style_id for s in master_doc.styles]
+    
+    # Append a document
+    doc_to_append = Document(docx_path("styles_de.docx"))
+    appended_style_ids = [s.style_id for s in doc_to_append.styles]
+    
+    composer.append(doc_to_append)
+    
+    final_style_ids = [s.style_id for s in composer.doc.styles]
+    
+    # Check that master styles are still present
+    assert 'MyStyle1' in final_style_ids, \
+        "Master document custom style should be preserved"
+    
+    # Check that appended document's styles exist with unique IDs
+    assert any('doc1_MeineFormatvorlage' in style_id for style_id in final_style_ids), \
+        "Appended document custom style should be preserved with unique ID"
+
+
+def test_preserve_document_styles_multiple_documents():
+    """Test that multiple documents can be appended with unique style IDs."""
+    master_doc = Document(docx_path("styles_en.docx"))
+    composer = Composer(master_doc, preserve_document_styles=True)
+    
+    # Append first document
+    composer.append(Document(docx_path("styles_de.docx")))
+    
+    # Append second document (same document again)
+    composer.append(Document(docx_path("styles_de.docx")))
+    
+    style_ids = [s.style_id for s in composer.doc.styles]
+    
+    # Check for styles from both appends with different prefixes
+    doc1_styles = [sid for sid in style_ids if 'doc1_' in sid]
+    doc2_styles = [sid for sid in style_ids if 'doc2_' in sid]
+    
+    assert len(doc1_styles) > 0, "Expected styles from first appended document"
+    assert len(doc2_styles) > 0, "Expected styles from second appended document"
+
+
+def test_default_behavior_unchanged():
+    """Test that default behavior (preserve_document_styles=False) remains unchanged."""
+    master_doc = Document(docx_path("styles_en.docx"))
+    composer = Composer(master_doc)  # Default: preserve_document_styles=False
+    
+    initial_style_ids = [s.style_id for s in master_doc.styles]
+    
+    doc_to_append = Document(docx_path("styles_de.docx"))
+    composer.append(doc_to_append)
+    
+    final_style_ids = [s.style_id for s in composer.doc.styles]
+    
+    # Should not have any 'doc1_' prefixed styles in default mode
+    assert not any('doc1_' in style_id for style_id in final_style_ids), \
+        "Default behavior should not create prefixed style IDs"
+
+
 @pytest.fixture
 def merged_styles():
     composer = Composer(Document(docx_path("styles_en.docx")))
